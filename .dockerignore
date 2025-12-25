@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/.cache
+**/cache
+**/*.log
+**/*.tgz
+data/
+.git
+.gitignore
+.env
+.env.*

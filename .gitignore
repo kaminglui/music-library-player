@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+build/
+server/dist/
+client/dist/
+
+# Caches
+.cache/
+**/.cache/
+cache/
+**/cache/
+.eslintcache
+.vite/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.logs/
+logs/
+
+# Runtime data
+data/
+
+# Environment
+.env
+.env.*
+.env.local
+.env.*.local
+
+# Coverage
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+tmp_*.py

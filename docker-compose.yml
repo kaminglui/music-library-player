@@ -1,0 +1,12 @@
+services:
+  musicplayer:
+    build: .
+    ports:
+      - "8080:3000"
+    environment:
+      APP_CONFIG: "/config/config.yaml"
+    volumes:
+      - "E:\\DPRK Music:/data:ro"
+      - ./config/config.yaml:/config/config.yaml:ro
+      - ./config/title-metadata.json:/config/title-metadata.json:ro
+      - ./data:/app/data
