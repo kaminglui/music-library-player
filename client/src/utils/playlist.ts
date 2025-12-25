@@ -44,6 +44,7 @@ export function moveSongsInPlaylist(
   sourceIds: string[],
   targetIndex: number,
 ): string[] {
+  // Assumes songIds are unique; the server normalizes playlist songIds.
   const uniqueSources = sourceIds.filter((id, index) => sourceIds.indexOf(id) === index);
   if (uniqueSources.length === 0) {
     return songIds;

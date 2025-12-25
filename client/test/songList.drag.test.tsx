@@ -14,7 +14,9 @@ vi.mock('react-virtualized-auto-sizer', () => ({
 type RenderOptions = {
   disableRowClick?: boolean;
   withReorder?: boolean;
+  withMoveControls?: boolean;
   onSelect?: (song: SongSummary) => void;
+  onMove?: (songId: string, direction: 'up' | 'down') => void;
 };
 
 function song(id: string): SongSummary {
@@ -73,6 +75,7 @@ function renderList(options: RenderOptions = {}) {
   const songs = [song('1'), song('2'), song('3'), song('4'), song('5')];
   const onReorder = options.withReorder === false ? undefined : vi.fn();
   const onSelect = options.onSelect ?? vi.fn();
+  const onMove = options.onMove ?? vi.fn();
   const utils = render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -83,13 +86,14 @@ function renderList(options: RenderOptions = {}) {
         onSelect={onSelect}
         rowHeight={60}
         onReorder={onReorder}
+        onMove={options.withMoveControls ? onMove : undefined}
         disableRowClick={options.disableRowClick}
       />
     </ThemeProvider>,
   );
   const rows = setRowRects(utils.container);
   const handles = utils.container.querySelectorAll('.song-row-handle');
-  return { ...utils, rows, handles, onReorder, onSelect };
+  return { ...utils, rows, handles, onMove, onReorder, onSelect };
 }
 
 afterEach(() => {
@@ -262,5 +266,33 @@ describe('SongList edit mode affordances', () => {
     const { rows, onSelect } = renderList({ disableRowClick: true });
     fireEvent.click(rows[0]);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe('SongList accessibility', () => {
+  it('exposes drag handles with an accessible label', () => {
+    const { getByRole } = renderList();
+    expect(getByRole('button', { name: 'Reorder Song 1' })).toBeTruthy();
+  });
+
+  it('renders move controls with accessible labels', () => {
+    const { getByRole } = renderList({ withMoveControls: true });
+    expect(getByRole('button', { name: 'Move up Song 1' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Move down Song 1' })).toBeTruthy();
+  });
+
+  it('fires move callbacks from the move buttons', () => {
+    const onMove = vi.fn();
+    const { getByRole } = renderList({ withMoveControls: true, onMove });
+    fireEvent.click(getByRole('button', { name: 'Move down Song 1' }));
+    expect(onMove).toHaveBeenCalledWith('1', 'down');
+  });
+
+  it('disables move up on the first row and move down on the last row', () => {
+    const { getByRole } = renderList({ withMoveControls: true });
+    const moveUp = getByRole('button', { name: 'Move up Song 1' }) as HTMLButtonElement;
+    const moveDown = getByRole('button', { name: 'Move down Song 5' }) as HTMLButtonElement;
+    expect(moveUp.disabled).toBe(true);
+    expect(moveDown.disabled).toBe(true);
   });
 });

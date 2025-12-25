@@ -19,6 +19,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import type { SongSummary } from '../types';
 import { formatSongIdentifier } from '../utils/playlist';
 
@@ -39,6 +41,8 @@ interface SongListProps {
   dense?: boolean;
   actions?: SongAction[];
   onReorder?: (fromIds: string[], toIndex: number) => void;
+  onMove?: (songId: string, direction: 'up' | 'down') => void;
+  reorderDisabled?: boolean;
   disableRowClick?: boolean;
   showCheckboxes?: boolean;
   selectedIds?: Set<string>;
@@ -52,6 +56,8 @@ interface RowData {
   onSelect: (song: SongSummary) => void;
   dense?: boolean;
   actions?: SongAction[];
+  songIndexById?: Map<string, number>;
+  songsCount: number;
   rowHeight: number;
   showCheckboxes?: boolean;
   selectedIds?: Set<string>;
@@ -59,8 +65,10 @@ interface RowData {
   disableRowClick?: boolean;
   draggingSet?: Set<string>;
   onReorder?: (fromIds: string[], toIndex: number) => void;
+  onMove?: (songId: string, direction: 'up' | 'down') => void;
+  reorderDisabled?: boolean;
   onDragStart?: (
-    event: ReactPointerEvent<HTMLDivElement>,
+    event: ReactPointerEvent<HTMLElement>,
     song: SongSummary,
     rowElement: HTMLDivElement | null,
     isSelected: boolean,
@@ -92,7 +100,15 @@ const OuterElement = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
     const className = props.className
       ? `song-list-outer ${props.className}`
       : 'song-list-outer';
-    return <div {...props} ref={ref} style={style} className={className} />;
+    return (
+      <div
+        {...props}
+        ref={ref}
+        style={style}
+        className={className}
+        role={props.role ?? 'list'}
+      />
+    );
   },
 );
 
@@ -104,7 +120,7 @@ function Row({ index, style, data }: ListChildComponentProps<RowData>) {
 
   if (entry.type === 'gap') {
     return (
-      <div style={style}>
+      <div style={style} role="presentation" aria-hidden="true">
         <div
           className="song-drop-gap"
           style={{ height: '100%', pointerEvents: 'none' }}
@@ -117,10 +133,16 @@ function Row({ index, style, data }: ListChildComponentProps<RowData>) {
   const song = entry.song;
   const subtitle = formatSongIdentifier(song);
   const title = song.titleText || song.id;
+  const songIndex = data.songIndexById?.get(song.id);
   const isHighlighted = data.highlightId === song.id;
+  const isCurrent = data.activeId === song.id || isHighlighted;
   const rowRef = useRef<HTMLDivElement | null>(null);
   const isDraggingRow = data.draggingSet?.has(song.id);
-  const rowClassName = ['song-row', isHighlighted ? 'song-row-playing' : '', isDraggingRow ? 'song-row-dragging' : '']
+  const rowClassName = [
+    'song-row',
+    isHighlighted ? 'song-row-playing' : '',
+    isDraggingRow ? 'song-row-dragging' : '',
+  ]
     .filter(Boolean)
     .join(' ');
   const visibleActions = data.actions?.filter((action) => !action.hidden?.(song)) ?? [];
@@ -128,10 +150,18 @@ function Row({ index, style, data }: ListChildComponentProps<RowData>) {
   const isSelected = Boolean(isSelectable && data.selectedIds?.has(song.id));
   const hasSelection = Boolean(data.selectedIds && data.selectedIds.size > 0);
   const canDrag = Boolean(data.onReorder);
+  const canMove = Boolean(data.onMove);
+  const isReorderDisabled = Boolean(data.reorderDisabled);
+  const moveUpDisabled =
+    isReorderDisabled || songIndex === undefined || songIndex <= 0;
+  const moveDownDisabled =
+    isReorderDisabled ||
+    songIndex === undefined ||
+    songIndex >= data.songsCount - 1;
   const allowClick = !data.disableRowClick;
 
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!canDrag) {
+  const handlePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!canDrag || isReorderDisabled) {
       return;
     }
     if (event.button !== 0) {
@@ -141,7 +171,13 @@ function Row({ index, style, data }: ListChildComponentProps<RowData>) {
   };
 
   return (
-    <div style={style}>
+    <div
+      style={style}
+      role="listitem"
+      aria-current={isCurrent ? 'true' : undefined}
+      aria-posinset={songIndex !== undefined ? songIndex + 1 : undefined}
+      aria-setsize={data.songsCount}
+    >
       <ListItemButton
         ref={rowRef}
         selected={data.activeId === song.id}
@@ -158,18 +194,51 @@ function Row({ index, style, data }: ListChildComponentProps<RowData>) {
               size="small"
               checked={isSelected}
               onChange={() => data.onToggleSelect?.(song)}
+              inputProps={{ 'aria-label': `Select ${title}` }}
             />
           </Box>
         )}
         {canDrag && (
-          <Box
-            className="song-row-handle"
-            aria-hidden="true"
+          <IconButton
+            className={isReorderDisabled ? 'song-row-handle is-disabled' : 'song-row-handle'}
+            size="small"
+            aria-label={`Reorder ${title}`}
+            disabled={isReorderDisabled}
             sx={{ touchAction: 'none' }}
             onClick={(event) => event.stopPropagation()}
             onPointerDown={handlePointerDown}
           >
-            <DragIndicatorIcon fontSize="small" />
+            <DragIndicatorIcon fontSize="small" aria-hidden="true" />
+          </IconButton>
+        )}
+        {canMove && (
+          <Box className="song-row-move">
+            <IconButton
+              className="song-row-move-button"
+              size="small"
+              aria-label={`Move up ${title}`}
+              disabled={moveUpDisabled}
+              onClick={(event) => {
+                event.stopPropagation();
+                data.onMove?.(song.id, 'up');
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <KeyboardArrowUpIcon fontSize="small" aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              className="song-row-move-button"
+              size="small"
+              aria-label={`Move down ${title}`}
+              disabled={moveDownDisabled}
+              onClick={(event) => {
+                event.stopPropagation();
+                data.onMove?.(song.id, 'down');
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <KeyboardArrowDownIcon fontSize="small" aria-hidden="true" />
+            </IconButton>
           </Box>
         )}
         <Box className="song-row-slot" aria-hidden="true">
@@ -228,6 +297,8 @@ export default function SongList({
   dense = false,
   actions,
   onReorder,
+  onMove,
+  reorderDisabled = false,
   disableRowClick = false,
   showCheckboxes = false,
   selectedIds,
@@ -239,6 +310,9 @@ export default function SongList({
   const dropOriginalIndexRef = useRef<number | null>(null);
   const latestDropVisualIndexRef = useRef<number | null>(null);
   const autoScrollFrameRef = useRef<number | null>(null);
+  const pointerMoveFrameRef = useRef<number | null>(null);
+  const latestPointerYRef = useRef<number | null>(null);
+  const needsListResetRef = useRef(false);
   const listRef = useRef<VariableSizeListType | null>(null);
   const outerRef = useRef<HTMLDivElement | null>(null);
 
@@ -248,6 +322,10 @@ export default function SongList({
   );
   const isDragging = Boolean(dragState);
   const canReorder = Boolean(onReorder);
+  const songIndexById = useMemo(
+    () => new Map(songs.map((song, index) => [song.id, index])),
+    [songs],
+  );
 
   const visualizationItems = useMemo(
     () => songs.filter((song) => !draggingSet.has(song.id)),
@@ -337,9 +415,15 @@ export default function SongList({
     dragStateRef.current = dragState;
   }, [dragState]);
 
+  useEffect(() => {
+    if (!dragState) {
+      listRef.current?.resetAfterIndex(0, false);
+    }
+  }, [dragState]);
+
   const handleDragStart = useCallback(
     (
-      event: ReactPointerEvent<HTMLDivElement>,
+      event: ReactPointerEvent<HTMLElement>,
       song: SongSummary,
       rowElement: HTMLDivElement | null,
       isSelected: boolean,
@@ -395,6 +479,8 @@ export default function SongList({
         listWidth: rowRect?.width ?? listRect.width,
       };
       dragStateRef.current = nextState;
+      latestPointerYRef.current = event.clientY;
+      needsListResetRef.current = false;
       setDragState(nextState);
       listRef.current?.resetAfterIndex(0, false);
       setDropVisualIndex(visualIndexAtStart);
@@ -414,6 +500,13 @@ export default function SongList({
       if (autoScrollFrameRef.current !== null) {
         cancelAnimationFrame(autoScrollFrameRef.current);
         autoScrollFrameRef.current = null;
+      }
+    };
+
+    const cancelPointerMoveFrame = () => {
+      if (pointerMoveFrameRef.current !== null) {
+        cancelAnimationFrame(pointerMoveFrameRef.current);
+        pointerMoveFrameRef.current = null;
       }
     };
 
@@ -455,10 +548,12 @@ export default function SongList({
       const drop = computeDropPosition(current.currPageY, latestDropVisualIndexRef.current);
       if (drop) {
         if (drop.visualIndex !== latestDropVisualIndexRef.current) {
+          latestDropVisualIndexRef.current = drop.visualIndex;
           listRef.current?.resetAfterIndex(0, false);
         }
-        latestDropVisualIndexRef.current = drop.visualIndex;
-        setDropVisualIndex(drop.visualIndex);
+        setDropVisualIndex((prev) =>
+          prev === drop.visualIndex ? prev : drop.visualIndex,
+        );
         dropOriginalIndexRef.current = drop.originalIndex;
       }
 
@@ -484,24 +579,48 @@ export default function SongList({
       if (!current || event.pointerId !== current.pointerId) return;
       const nextState = { ...current, currPageY: event.clientY };
       dragStateRef.current = nextState;
-      setDragState(nextState);
+      latestPointerYRef.current = event.clientY;
       const drop = computeDropPosition(event.clientY, latestDropVisualIndexRef.current);
       if (drop) {
         if (drop.visualIndex !== latestDropVisualIndexRef.current) {
-          listRef.current?.resetAfterIndex(0, false);
+          latestDropVisualIndexRef.current = drop.visualIndex;
+          needsListResetRef.current = true;
         }
-        latestDropVisualIndexRef.current = drop.visualIndex;
-        setDropVisualIndex(drop.visualIndex);
         dropOriginalIndexRef.current = drop.originalIndex;
       }
       updateAutoScroll(event.clientY);
+      if (pointerMoveFrameRef.current === null) {
+        pointerMoveFrameRef.current = requestAnimationFrame(() => {
+          pointerMoveFrameRef.current = null;
+          const latest = dragStateRef.current;
+          if (!latest) {
+            return;
+          }
+          setDragState((prev) =>
+            prev && prev.currPageY === latest.currPageY ? prev : latest,
+          );
+          if (latestDropVisualIndexRef.current !== null) {
+            setDropVisualIndex((prev) =>
+              prev === latestDropVisualIndexRef.current
+                ? prev
+                : latestDropVisualIndexRef.current,
+            );
+          }
+          if (needsListResetRef.current) {
+            listRef.current?.resetAfterIndex(0, false);
+            needsListResetRef.current = false;
+          }
+        });
+      }
     };
 
     const handlePointerUp = (event: PointerEvent) => {
       const current = dragStateRef.current;
       if (!current || event.pointerId !== current.pointerId) return;
       cancelAutoScroll();
-      const finalDrop = computeDropPosition(current.currPageY, latestDropVisualIndexRef.current);
+      cancelPointerMoveFrame();
+      const finalClientY = latestPointerYRef.current ?? current.currPageY;
+      const finalDrop = computeDropPosition(finalClientY, latestDropVisualIndexRef.current);
       const targetIndex = finalDrop?.originalIndex ?? dropOriginalIndexRef.current;
       if (targetIndex !== null && targetIndex !== undefined && canReorder) {
         onReorder?.(current.draggingIdsSorted, targetIndex);
@@ -511,6 +630,8 @@ export default function SongList({
       setDropVisualIndex(null);
       latestDropVisualIndexRef.current = null;
       dropOriginalIndexRef.current = null;
+      latestPointerYRef.current = null;
+      needsListResetRef.current = false;
     };
 
     window.addEventListener('pointermove', handlePointerMove);
@@ -518,6 +639,7 @@ export default function SongList({
     window.addEventListener('pointercancel', handlePointerUp);
     return () => {
       cancelAutoScroll();
+      cancelPointerMoveFrame();
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerUp);
@@ -544,11 +666,15 @@ export default function SongList({
       onSelect,
       dense,
       actions,
+      songIndexById,
+      songsCount: songs.length,
       rowHeight,
       showCheckboxes,
       selectedIds,
       onToggleSelect,
       onReorder,
+      onMove,
+      reorderDisabled,
       disableRowClick,
       draggingSet,
       onDragStart: handleDragStart,
@@ -561,11 +687,15 @@ export default function SongList({
       draggingSet,
       handleDragStart,
       highlightId,
+      onMove,
       onReorder,
       onSelect,
       onToggleSelect,
+      reorderDisabled,
       renderItems,
       rowHeight,
+      songIndexById,
+      songs.length,
       selectedIds,
       showCheckboxes,
     ],

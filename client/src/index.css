@@ -322,6 +322,13 @@ body {
   gap: 8px;
 }
 
+.playlist-save-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 4px;
+}
+
 .list-wrap {
   flex: 1;
   min-height: 0;
@@ -460,6 +467,18 @@ body {
   color: var(--muted);
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .song-list-root {
   position: relative;
   height: 100%;
@@ -501,7 +520,9 @@ body {
 
 .song-row-handle {
   width: 32px;
+  height: 32px;
   min-width: 32px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -511,6 +532,24 @@ body {
 
 .song-row-handle.is-disabled {
   cursor: default;
+}
+
+.song-row-move {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.song-row-move-button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+
+.song-row-move-button .MuiSvgIcon-root {
+  font-size: 18px;
 }
 
 .song-row-dragging {
@@ -596,6 +635,10 @@ body {
 
 .song-row-handle .MuiSvgIcon-root {
   color: rgba(92, 85, 75, 0.7);
+}
+
+.song-row-handle.Mui-disabled .MuiSvgIcon-root {
+  color: rgba(92, 85, 75, 0.35);
 }
 
 .song-row-handle:hover .MuiSvgIcon-root {

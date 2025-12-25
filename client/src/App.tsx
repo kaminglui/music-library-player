@@ -197,6 +197,13 @@ export default function App() {
     sourcePlaylistId: string | null;
   }>({ open: false, message: '', song: null, sourcePlaylistId: null });
   const [isPlaylistEditing, setIsPlaylistEditing] = useState(false);
+  const [isPlaylistReorderSaving, setIsPlaylistReorderSaving] = useState(false);
+  const [playlistReorderToast, setPlaylistReorderToast] = useState({
+    open: false,
+    message: '',
+  });
+  const [playlistReorderAnnouncement, setPlaylistReorderAnnouncement] = useState('');
+  const enablePlaylistMoveControls = false;
   const [selectedPlaylistSongIds, setSelectedPlaylistSongIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -243,6 +250,7 @@ export default function App() {
   const lastCountedRef = useRef<string | null>(null);
   const saveStatsTimeoutRef = useRef<number | null>(null);
   const playlistSongsLanguageRef = useRef<string | null>(null);
+  const reorderRequestIdRef = useRef(0);
   const analysisCacheRef = useRef<Map<string, SongAnalysis>>(new Map());
   const analysisRequestIdRef = useRef(0);
   const analysisAbortRef = useRef<AbortController | null>(null);
@@ -451,6 +459,34 @@ export default function App() {
   const availableSongs = isSearching ? filteredSearchSongs : playlistSongs;
   const searchActive =
     Boolean(query.trim()) || searchScope !== 'name' || dateFrom !== '' || dateTo !== '';
+  const announcePlaylistReorder = useCallback(
+    (sourceIds: string[], nextOrder: string[]) => {
+      if (sourceIds.length === 0 || nextOrder.length === 0) {
+        return;
+      }
+      const indices = sourceIds
+        .map((id) => nextOrder.indexOf(id))
+        .filter((index) => index >= 0);
+      if (indices.length === 0) {
+        return;
+      }
+      const position = Math.min(...indices) + 1;
+      const total = nextOrder.length;
+      if (sourceIds.length === 1) {
+        const id = sourceIds[0];
+        const song = playlistSongs.find((item) => item.id === id);
+        const title = song?.titleText || song?.id || id;
+        setPlaylistReorderAnnouncement(
+          `Moved ${title} to position ${position} of ${total}.`,
+        );
+        return;
+      }
+      setPlaylistReorderAnnouncement(
+        `Moved ${sourceIds.length} songs to position ${position} of ${total}.`,
+      );
+    },
+    [playlistSongs],
+  );
 
   useEffect(() => {
     if (filteredSearchSongs.length > 0) {
@@ -1301,6 +1337,10 @@ export default function App() {
     setPlaylistToast((prev) => ({ ...prev, open: false }));
   }, []);
 
+  const handleClosePlaylistReorderToast = useCallback(() => {
+    setPlaylistReorderToast((prev) => ({ ...prev, open: false }));
+  }, []);
+
   const handleCloseStatsToast = useCallback(() => {
     setStatsToast((prev) => ({ ...prev, open: false }));
   }, []);
@@ -1513,29 +1553,94 @@ export default function App() {
       if (!selectedPlaylistId || !playlistQuery.data) {
         return;
       }
-      if (sourceIds.length === 0) {
+      if (sourceIds.length === 0 || isPlaylistReorderSaving) {
         return;
       }
-      const nextOrder = moveSongsInPlaylist(
-        playlistQuery.data.songIds,
-        sourceIds,
-        targetIndex,
-      );
-      if (nextOrder.join(',') === playlistQuery.data.songIds.join(',')) {
+      // PlaylistStore.normalizeSongIds de-duplicates, so songIds are unique here.
+      const currentOrder = playlistQuery.data.songIds;
+      const nextOrder = moveSongsInPlaylist(currentOrder, sourceIds, targetIndex);
+      if (nextOrder.join(',') === currentOrder.join(',')) {
         return;
       }
+      const requestId = (reorderRequestIdRef.current += 1);
+      setIsPlaylistReorderSaving(true);
+      const previousPlaylist = playlistQuery.data;
+      const previousSongs = playlistSongsQuery.data;
+
+      const optimistic = { ...previousPlaylist, songIds: nextOrder };
+      queryClient.setQueryData(['playlist', previousPlaylist.id], optimistic);
+      syncPlaylistSongs(optimistic);
+      announcePlaylistReorder(sourceIds, nextOrder);
       try {
-        const updated = await updatePlaylist(playlistQuery.data.id, { songIds: nextOrder });
+        const updated = await updatePlaylist(previousPlaylist.id, { songIds: nextOrder });
+        if (requestId !== reorderRequestIdRef.current) {
+          return;
+        }
+        queryClient.setQueryData(['playlist', updated.id], updated);
         syncPlaylistSongs(updated);
         await queryClient.invalidateQueries({ queryKey: ['playlist', selectedPlaylistId] });
         await queryClient.invalidateQueries({
           queryKey: ['playlist-songs', selectedPlaylistId, language],
         });
       } catch (error) {
+        if (requestId !== reorderRequestIdRef.current) {
+          return;
+        }
         console.error(error);
+        setPlaylistReorderToast({
+          open: true,
+          message: 'Failed to save playlist order. Please try again.',
+        });
+        setPlaylistReorderAnnouncement('Failed to save playlist order.');
+        queryClient.setQueryData(['playlist', previousPlaylist.id], previousPlaylist);
+        if (previousSongs) {
+          queryClient.setQueryData(
+            ['playlist-songs', previousPlaylist.id, language],
+            previousSongs,
+          );
+        } else {
+          syncPlaylistSongs(previousPlaylist);
+        }
+      } finally {
+        if (requestId === reorderRequestIdRef.current) {
+          setIsPlaylistReorderSaving(false);
+        }
       }
     },
-    [language, playlistQuery.data, queryClient, selectedPlaylistId, syncPlaylistSongs],
+    [
+      announcePlaylistReorder,
+      isPlaylistReorderSaving,
+      language,
+      playlistQuery.data,
+      playlistSongsQuery.data,
+      queryClient,
+      selectedPlaylistId,
+      syncPlaylistSongs,
+    ],
+  );
+
+  const handleMovePlaylistSong = useCallback(
+    (songId: string, direction: 'up' | 'down') => {
+      if (!playlistQuery.data) {
+        return;
+      }
+      const currentIndex = playlistQuery.data.songIds.indexOf(songId);
+      if (currentIndex === -1) {
+        return;
+      }
+      if (direction === 'up' && currentIndex === 0) {
+        return;
+      }
+      if (direction === 'down' && currentIndex === playlistQuery.data.songIds.length - 1) {
+        return;
+      }
+      const targetIndex =
+        direction === 'up'
+          ? Math.max(0, currentIndex - 1)
+          : Math.min(playlistQuery.data.songIds.length, currentIndex + 2);
+      handleReorderPlaylistSong([songId], targetIndex);
+    },
+    [handleReorderPlaylistSong, playlistQuery.data],
   );
 
   const searchActions = useMemo(
@@ -1767,6 +1872,9 @@ export default function App() {
                   </Box>
                   <Box className="playlist-header-right" />
                 </Box>
+                <Box className="sr-only" aria-live="polite" aria-atomic="true">
+                  {playlistReorderAnnouncement}
+                </Box>
                 {!playlistQuery.data && (
                   <div className="empty-state">Select or create a playlist.</div>
                 )}
@@ -1797,6 +1905,12 @@ export default function App() {
                         rowHeight={72}
                         actions={playlistActions}
                         onReorder={isPlaylistEditing ? handleReorderPlaylistSong : undefined}
+                        onMove={
+                          isPlaylistEditing && enablePlaylistMoveControls
+                            ? handleMovePlaylistSong
+                            : undefined
+                        }
+                        reorderDisabled={isPlaylistReorderSaving}
                         disableRowClick={isPlaylistEditing}
                         showCheckboxes={isPlaylistEditing}
                         selectedIds={selectedPlaylistSongIds}
@@ -1853,6 +1967,14 @@ export default function App() {
                           >
                             Rename
                           </Button>
+                          {isPlaylistEditing && isPlaylistReorderSaving && (
+                            <Box className="playlist-save-indicator">
+                              <CircularProgress size={14} />
+                              <Typography variant="caption" color="text.secondary">
+                                Saving...
+                              </Typography>
+                            </Box>
+                          )}
                         </Box>
                       </Box>
                       <Box className="playlist-actions-group">
@@ -2185,6 +2307,14 @@ export default function App() {
           }
         />
       </Snackbar>
+      <Snackbar
+        open={playlistReorderToast.open}
+        autoHideDuration={6000}
+        onClose={handleClosePlaylistReorderToast}
+        message={playlistReorderToast.message}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{ bottom: 128 }}
+      />
       <Snackbar
         open={statsToast.open}
         autoHideDuration={4000}

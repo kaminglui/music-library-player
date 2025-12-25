@@ -9,7 +9,7 @@ services:
       # LIBRARY_SONGS_DIR: "/data/uriminzokkiri"
       # PLAYLISTS_DIR: "/app/data/playlists"
     volumes:
-      - "./library:/data:ro"
+      - "E:/DPRK Music:/data:ro"
       - ./config/config.yaml:/config/config.yaml:ro
       - ./config/title-metadata.json:/config/title-metadata.json:ro
       - ./data:/app/data
