@@ -33,6 +33,12 @@ data/
 .env.local
 .env.*.local
 
+# Local config
+config/config.yaml
+config/config.local.yaml
+docker-compose.override.yml
+docker-compose.local.yml
+
 # Coverage
 coverage/
 

@@ -1,4 +1,6 @@
 libraryRoot: "/data"
+# listingPath: "/data/listing.txt"
+# librarySongsDir: "/data/uriminzokkiri"
 port: 3000
 reindexToken: "change-me"
 # cacheDir: "/app/cache"

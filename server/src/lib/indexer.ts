@@ -22,6 +22,8 @@ interface IndexMeta {
   listingMtimeMs: number;
   listingSize: number;
   libraryRoot: string;
+  librarySongsDir: string;
+  listingPath: string;
   metadataMtimeMs: number;
   metadataSize: number;
   titleMetadataPath: string;
@@ -58,18 +60,27 @@ const FUSE_OPTIONS: IFuseOptions<SongRecord> = {
 
 export async function loadOrBuildIndex(options: {
   libraryRoot: string;
+  librarySongsDir?: string;
+  listingPath?: string;
   cacheDir: string;
   titleMetadataPath: string;
   titleLanguage?: string;
   forceRebuild?: boolean;
 }): Promise<IndexState> {
-  const listingPath = resolveWithinRoot(options.libraryRoot, 'listing.txt');
+  const listingPath = resolveListingPath(options);
+  const librarySongsDir = resolveSongsDir(options);
   const listingStat = await fs.stat(listingPath);
   const metadataStat = await fs.stat(options.titleMetadataPath);
   const cachePath = path.resolve(options.cacheDir, 'index.json');
 
   if (!options.forceRebuild) {
-    const cached = await readCache(cachePath, listingStat, metadataStat, options);
+    const cached = await readCache(cachePath, listingStat, metadataStat, {
+      libraryRoot: options.libraryRoot,
+      librarySongsDir,
+      listingPath,
+      titleMetadataPath: options.titleMetadataPath,
+      titleLanguage: options.titleLanguage,
+    });
     if (cached) {
       return toIndexState(cached);
     }
@@ -77,12 +88,14 @@ export async function loadOrBuildIndex(options: {
 
   const titleMetadata = await loadTitleMetadata(options.titleMetadataPath);
   const defaultLanguage = options.titleLanguage ?? 'original';
-  const songs = await buildIndex(options.libraryRoot, titleMetadata, defaultLanguage);
+  const songs = await buildIndex(listingPath, librarySongsDir, titleMetadata, defaultLanguage);
   const dateBounds = getDateBounds(songs);
   const meta: IndexMeta = {
     listingMtimeMs: listingStat.mtimeMs,
     listingSize: listingStat.size,
     libraryRoot: options.libraryRoot,
+    librarySongsDir,
+    listingPath,
     metadataMtimeMs: metadataStat.mtimeMs,
     metadataSize: metadataStat.size,
     titleMetadataPath: options.titleMetadataPath,
@@ -224,6 +237,8 @@ async function readCache(
   metadataStat: { mtimeMs: number; size: number },
   options: {
     libraryRoot: string;
+    librarySongsDir: string;
+    listingPath: string;
     titleMetadataPath: string;
     titleLanguage?: string;
   },
@@ -235,6 +250,8 @@ async function readCache(
       cache.meta.listingMtimeMs === listingStat.mtimeMs &&
       cache.meta.listingSize === listingStat.size &&
       cache.meta.libraryRoot === options.libraryRoot &&
+      cache.meta.librarySongsDir === options.librarySongsDir &&
+      cache.meta.listingPath === options.listingPath &&
       cache.meta.metadataMtimeMs === metadataStat.mtimeMs &&
       cache.meta.metadataSize === metadataStat.size &&
       cache.meta.titleMetadataPath === options.titleMetadataPath &&
@@ -254,17 +271,16 @@ async function writeCache(cachePath: string, cache: IndexCache): Promise<void> {
 }
 
 async function buildIndex(
-  libraryRoot: string,
+  listingPath: string,
+  librarySongsDir: string,
   titleMetadata: TitleMetadata,
   defaultLanguage: string,
 ): Promise<SongRecord[]> {
-  const listingPath = resolveWithinRoot(libraryRoot, 'listing.txt');
   const listingContents = await fs.readFile(listingPath, 'utf8');
   const listingRecords = parseListing(listingContents);
   const listingMap = new Map(listingRecords.map((record) => [record.id, record]));
 
-  const libraryDir = resolveWithinRoot(libraryRoot, 'uriminzokkiri');
-  const dirEntries = await fs.readdir(libraryDir, { withFileTypes: true });
+  const dirEntries = await fs.readdir(librarySongsDir, { withFileTypes: true });
 
   const songDirs = dirEntries
     .filter((entry) => entry.isDirectory())
@@ -273,7 +289,7 @@ async function buildIndex(
   const songs: SongRecord[] = [];
   for (const id of songDirs) {
     const record = await buildSongRecord(
-      libraryRoot,
+      librarySongsDir,
       id,
       listingMap.get(id),
       titleMetadata,
@@ -286,13 +302,13 @@ async function buildIndex(
 }
 
 async function buildSongRecord(
-  libraryRoot: string,
+  librarySongsDir: string,
   id: string,
   listingRecord: { titleLines: string[]; titleText: string } | undefined,
   titleMetadata: TitleMetadata,
   defaultLanguage: string,
 ): Promise<SongRecord> {
-  const songDir = resolveWithinRoot(libraryRoot, 'uriminzokkiri', id);
+  const songDir = resolveWithinRoot(librarySongsDir, id);
   const entries = await fs.readdir(songDir, { withFileTypes: true });
   const fileNames = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
   const lowerNames = fileNames.map((name) => name.toLowerCase());
@@ -402,4 +418,30 @@ function parseId(id: string): { date?: string; number?: string } {
     date: dateMatch ? dateMatch[0] : undefined,
     number: numberMatch ? numberMatch[1] : undefined,
   };
+}
+
+function resolveListingPath(options: {
+  libraryRoot: string;
+  listingPath?: string;
+}): string {
+  if (!options.listingPath) {
+    return resolveWithinRoot(options.libraryRoot, 'listing.txt');
+  }
+  if (path.isAbsolute(options.listingPath)) {
+    return path.resolve(options.listingPath);
+  }
+  return resolveWithinRoot(options.libraryRoot, options.listingPath);
+}
+
+function resolveSongsDir(options: {
+  libraryRoot: string;
+  librarySongsDir?: string;
+}): string {
+  if (!options.librarySongsDir) {
+    return resolveWithinRoot(options.libraryRoot, 'uriminzokkiri');
+  }
+  if (path.isAbsolute(options.librarySongsDir)) {
+    return path.resolve(options.librarySongsDir);
+  }
+  return resolveWithinRoot(options.libraryRoot, options.librarySongsDir);
 }

@@ -1,6 +1,0 @@
-libraryRoot: "/data"
-port: 3000
-reindexToken: "change-me"
-playlistsDir: "/app/data/playlists"
-titleMetadataPath: "/config/title-metadata.json"
-titleLanguage: "en"

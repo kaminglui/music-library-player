@@ -5,8 +5,11 @@ services:
       - "8080:3000"
     environment:
       APP_CONFIG: "/config/config.yaml"
+      # LISTING_PATH: "/data/listing.txt"
+      # LIBRARY_SONGS_DIR: "/data/uriminzokkiri"
+      # PLAYLISTS_DIR: "/app/data/playlists"
     volumes:
-      - "E:\\DPRK Music:/data:ro"
+      - "./library:/data:ro"
       - ./config/config.yaml:/config/config.yaml:ro
       - ./config/title-metadata.json:/config/title-metadata.json:ro
       - ./data:/app/data

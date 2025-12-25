@@ -34,6 +34,8 @@ async function start() {
   const config = loadConfig();
   let indexState = await loadOrBuildIndex({
     libraryRoot: config.libraryRoot,
+    librarySongsDir: config.librarySongsDir,
+    listingPath: config.listingPath,
     cacheDir: config.cacheDir,
     titleMetadataPath: config.titleMetadataPath,
     titleLanguage: config.titleLanguage,
@@ -179,8 +181,7 @@ async function start() {
     if (includeAnalysis && song.hasAudio && song.audioFile) {
       try {
         const audioPath = resolveWithinRoot(
-          config.libraryRoot,
-          'uriminzokkiri',
+          config.librarySongsDir,
           song.id,
           song.audioFile,
         );
@@ -209,8 +210,7 @@ async function start() {
     let audioPath: string;
     try {
       audioPath = resolveWithinRoot(
-        config.libraryRoot,
-        'uriminzokkiri',
+        config.librarySongsDir,
         song.id,
         song.audioFile,
       );
@@ -261,8 +261,7 @@ async function start() {
     let audioPath: string;
     try {
       audioPath = resolveWithinRoot(
-        config.libraryRoot,
-        'uriminzokkiri',
+        config.librarySongsDir,
         song.id,
         song.audioFile,
       );
@@ -324,8 +323,7 @@ async function start() {
     let scorePath: string;
     try {
       scorePath = resolveWithinRoot(
-        config.libraryRoot,
-        'uriminzokkiri',
+        config.librarySongsDir,
         song.id,
         song.scoreFile,
       );
@@ -358,6 +356,8 @@ async function start() {
     if (!reindexPromise) {
       reindexPromise = loadOrBuildIndex({
         libraryRoot: config.libraryRoot,
+        librarySongsDir: config.librarySongsDir,
+        listingPath: config.listingPath,
         cacheDir: config.cacheDir,
         titleMetadataPath: config.titleMetadataPath,
         titleLanguage: config.titleLanguage,

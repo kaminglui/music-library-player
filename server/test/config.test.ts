@@ -30,6 +30,8 @@ describe('loadConfig', () => {
       const configPath = path.join(root, 'config.yaml');
       const yaml = [
         `libraryRoot: \"${libraryRoot.replace(/\\/g, '/')}\"`,
+        'listingPath: "listings/listing.txt"',
+        'librarySongsDir: "songs"',
         'port: 4100',
         `titleMetadataPath: \"${metadataPath.replace(/\\/g, '/')}\"`,
         'titleLanguage: \"en\"',
@@ -42,6 +44,8 @@ describe('loadConfig', () => {
 
       const config = loadConfig();
       expect(config.libraryRoot).toBe(path.resolve(libraryRoot));
+      expect(config.listingPath).toBe(path.resolve(libraryRoot, 'listings', 'listing.txt'));
+      expect(config.librarySongsDir).toBe(path.resolve(libraryRoot, 'songs'));
       expect(config.titleMetadataPath).toBe(path.resolve(metadataPath));
       expect(config.port).toBe(4100);
       expect(config.titleLanguage).toBe('en');

@@ -4,6 +4,8 @@ import yaml from 'js-yaml';
 
 export interface AppConfig {
   libraryRoot: string;
+  librarySongsDir: string;
+  listingPath: string;
   port: number;
   reindexToken?: string;
   cacheDir: string;
@@ -15,6 +17,8 @@ export interface AppConfig {
 
 interface RawConfig {
   libraryRoot?: string;
+  librarySongsDir?: string;
+  listingPath?: string;
   port?: number;
   reindexToken?: string;
   cacheDir?: string;
@@ -43,6 +47,17 @@ export function loadConfig(): AppConfig {
     throw new Error('libraryRoot is required. Set APP_CONFIG or LIBRARY_ROOT.');
   }
 
+  const listingPathInput = fileConfig.listingPath || process.env.LISTING_PATH;
+  const listingPath = listingPathInput
+    ? resolveFromRoot(libraryRoot, listingPathInput)
+    : path.resolve(libraryRoot, 'listing.txt');
+
+  const librarySongsDirInput =
+    fileConfig.librarySongsDir || process.env.LIBRARY_SONGS_DIR;
+  const librarySongsDir = librarySongsDirInput
+    ? resolveFromRoot(libraryRoot, librarySongsDirInput)
+    : path.resolve(libraryRoot, 'uriminzokkiri');
+
   const portValue = fileConfig.port ?? process.env.PORT;
   const port = portValue ? Number(portValue) : 3000;
 
@@ -67,6 +82,8 @@ export function loadConfig(): AppConfig {
 
   return {
     libraryRoot: path.resolve(libraryRoot),
+    librarySongsDir: path.resolve(librarySongsDir),
+    listingPath: path.resolve(listingPath),
     port: Number.isFinite(port) ? port : 3000,
     reindexToken: fileConfig.reindexToken || process.env.REINDEX_TOKEN,
     cacheDir: path.resolve(cacheDir),
@@ -75,4 +92,8 @@ export function loadConfig(): AppConfig {
     titleMetadataPath: path.resolve(titleMetadataPath),
     titleLanguage: fileConfig.titleLanguage || process.env.TITLE_LANGUAGE,
   };
+}
+
+function resolveFromRoot(root: string, input: string): string {
+  return path.isAbsolute(input) ? path.resolve(input) : path.resolve(root, input);
 }
