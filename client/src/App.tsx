@@ -164,6 +164,7 @@ const LOOP_MODE_ICONS: Record<LoopMode, ReactNode> = {
   'loop-all': <RepeatIcon />,
   shuffle: <ShuffleIcon />,
 };
+const UNDO_TIMEOUT_MS = 7000;
 
 function flattenPages(pages: { items: SongSummary[] }[] | undefined) {
   if (!pages) {
@@ -243,6 +244,7 @@ export default function App() {
   const [pulseState, setPulseState] = useState<{ token: number; decayMs: number } | null>(
     null,
   );
+  const [undoToast, setUndoToast] = useState({ open: false, message: '', key: 0 });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const onEndedRef = useRef<() => void>(() => {});
@@ -255,6 +257,11 @@ export default function App() {
   const analysisRequestIdRef = useRef(0);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const currentSongIdRef = useRef<string | null>(null);
+  const undoTimeoutRef = useRef<number | null>(null);
+  const pendingUndoRef = useRef<{
+    undo: () => void | Promise<void>;
+    finalize?: () => void | Promise<void>;
+  } | null>(null);
   const analysisRef = useRef<SongAnalysis | null>(null);
   const beatCursorRef = useRef(0);
   const nextBeatTimeRef = useRef<number | null>(null);
@@ -1080,6 +1087,64 @@ export default function App() {
     await queryClient.invalidateQueries({ queryKey: ['playlists'] });
   }, [playlistQuery.data, queryClient]);
 
+  const clearUndoTimer = useCallback(() => {
+    if (undoTimeoutRef.current) {
+      window.clearTimeout(undoTimeoutRef.current);
+      undoTimeoutRef.current = null;
+    }
+  }, []);
+
+  const finalizePendingUndo = useCallback(() => {
+    const pending = pendingUndoRef.current;
+    if (!pending) {
+      return;
+    }
+    pendingUndoRef.current = null;
+    clearUndoTimer();
+    if (pending.finalize) {
+      Promise.resolve(pending.finalize()).catch((error) => {
+        console.error(error);
+      });
+    }
+  }, [clearUndoTimer]);
+
+  const queueUndo = useCallback(
+    (message: string, undo: () => void | Promise<void>, finalize?: () => void | Promise<void>) => {
+      finalizePendingUndo();
+      pendingUndoRef.current = { undo, finalize };
+      setUndoToast({ open: true, message, key: Date.now() });
+      clearUndoTimer();
+      undoTimeoutRef.current = window.setTimeout(() => {
+        finalizePendingUndo();
+        setUndoToast((prev) => ({ ...prev, open: false }));
+      }, UNDO_TIMEOUT_MS);
+    },
+    [clearUndoTimer, finalizePendingUndo],
+  );
+
+  const handleUndo = useCallback(() => {
+    const pending = pendingUndoRef.current;
+    if (!pending) {
+      return;
+    }
+    pendingUndoRef.current = null;
+    clearUndoTimer();
+    setUndoToast((prev) => ({ ...prev, open: false }));
+    Promise.resolve(pending.undo()).catch((error) => {
+      console.error(error);
+    });
+  }, [clearUndoTimer]);
+
+  const handleCloseUndoToast = useCallback(
+    (_event?: unknown, reason?: string) => {
+      if (reason === 'clickaway') {
+        return;
+      }
+      setUndoToast((prev) => ({ ...prev, open: false }));
+    },
+    [],
+  );
+
   const handleDeletePlaylist = useCallback(async () => {
     if (!playlistQuery.data) {
       return;
@@ -1087,10 +1152,52 @@ export default function App() {
     if (!window.confirm(`Delete playlist "${playlistQuery.data.name}"?`)) {
       return;
     }
-    await deletePlaylist(playlistQuery.data.id);
-    await queryClient.invalidateQueries({ queryKey: ['playlists'] });
-    setSelectedPlaylistId(null);
-  }, [playlistQuery.data, queryClient]);
+    const playlist = playlistQuery.data;
+    const currentPlaylists = playlistsQuery.data ?? [];
+    const summary =
+      currentPlaylists.find((item) => item.id === playlist.id) ?? {
+        id: playlist.id,
+        name: playlist.name,
+        songCount: playlist.songIds.length,
+        createdAt: playlist.createdAt,
+        updatedAt: playlist.updatedAt,
+      };
+    const remaining = currentPlaylists.filter((item) => item.id !== playlist.id);
+    queryClient.setQueryData(['playlists'], remaining);
+    if (selectedPlaylistId === playlist.id) {
+      setSelectedPlaylistId(remaining[0]?.id ?? null);
+    }
+    const cachedSongs = playlistSongsQuery.data;
+
+    queueUndo(
+      `Deleted playlist "${playlist.name}".`,
+      () => {
+        const latest =
+          queryClient.getQueryData<typeof remaining>(['playlists']) ?? remaining;
+        const restored = [...latest.filter((item) => item.id !== playlist.id), summary].sort(
+          (a, b) => a.name.localeCompare(b.name),
+        );
+        queryClient.setQueryData(['playlists'], restored);
+        queryClient.setQueryData(['playlist', playlist.id], playlist);
+        if (cachedSongs) {
+          queryClient.setQueryData(['playlist-songs', playlist.id, language], cachedSongs);
+        }
+        setSelectedPlaylistId(playlist.id);
+      },
+      async () => {
+        await deletePlaylist(playlist.id);
+        await queryClient.invalidateQueries({ queryKey: ['playlists'] });
+      },
+    );
+  }, [
+    language,
+    playlistQuery.data,
+    playlistSongsQuery.data,
+    playlistsQuery.data,
+    queryClient,
+    queueUndo,
+    selectedPlaylistId,
+  ]);
 
   const handleExportPlaylist = useCallback(async () => {
     if (!playlistQuery.data) {
@@ -1216,20 +1323,80 @@ export default function App() {
     ],
   );
 
-  const handleRemoveFromPlaylist = useCallback(
-    async (song: SongSummary) => {
+  const handleDeletePlaylistSongs = useCallback(
+    async (songIds: string[]) => {
       if (!playlistQuery.data) {
         return;
       }
-      const updated = await updatePlaylist(playlistQuery.data.id, {
-        songIds: playlistQuery.data.songIds.filter((id) => id !== song.id),
+      const uniqueIds = songIds.filter((id, index) => songIds.indexOf(id) === index);
+      if (uniqueIds.length === 0) {
+        return;
+      }
+      const previousPlaylist = playlistQuery.data;
+      const previousSongIds = previousPlaylist.songIds;
+      const removalSet = new Set(uniqueIds);
+      const nextSongIds = previousSongIds.filter((id) => !removalSet.has(id));
+      if (nextSongIds.length === previousSongIds.length) {
+        return;
+      }
+
+      const optimistic = { ...previousPlaylist, songIds: nextSongIds };
+      queryClient.setQueryData(['playlist', previousPlaylist.id], optimistic);
+      syncPlaylistSongs(optimistic);
+      setSelectedPlaylistSongIds((prev) => {
+        if (prev.size === 0) {
+          return prev;
+        }
+        const next = new Set(prev);
+        uniqueIds.forEach((id) => next.delete(id));
+        return next;
       });
-      queryClient.setQueryData(['playlist', updated.id], updated);
-      syncPlaylistSongs(updated);
-      await queryClient.invalidateQueries({ queryKey: ['playlists'] });
+
+      try {
+        const updated = await updatePlaylist(previousPlaylist.id, { songIds: nextSongIds });
+        queryClient.setQueryData(['playlist', updated.id], updated);
+        syncPlaylistSongs(updated);
+        await queryClient.invalidateQueries({ queryKey: ['playlists'] });
+
+        const songMap = new Map(
+          (playlistSongsQuery.data ?? []).map((song) => [song.id, song]),
+        );
+        const message =
+          uniqueIds.length === 1
+            ? `Removed ${songMap.get(uniqueIds[0])?.titleText || uniqueIds[0]} from playlist.`
+            : `Removed ${uniqueIds.length} songs from playlist.`;
+
+        queueUndo(message, async () => {
+          const restored = { ...updated, songIds: previousSongIds };
+          queryClient.setQueryData(['playlist', updated.id], restored);
+          syncPlaylistSongs(restored);
+          const reverted = await updatePlaylist(updated.id, { songIds: previousSongIds });
+          queryClient.setQueryData(['playlist', reverted.id], reverted);
+          syncPlaylistSongs(reverted);
+          await queryClient.invalidateQueries({ queryKey: ['playlists'] });
+        });
+      } catch (error) {
+        console.error(error);
+        queryClient.setQueryData(['playlist', previousPlaylist.id], previousPlaylist);
+        syncPlaylistSongs(previousPlaylist);
+      }
     },
-    [playlistQuery.data, queryClient, syncPlaylistSongs],
+    [playlistQuery.data, playlistSongsQuery.data, queryClient, queueUndo, syncPlaylistSongs],
   );
+
+  const handleRemoveFromPlaylist = useCallback(
+    async (song: SongSummary) => {
+      await handleDeletePlaylistSongs([song.id]);
+    },
+    [handleDeletePlaylistSongs],
+  );
+
+  const handleRemoveSelectedFromPlaylist = useCallback(async () => {
+    if (selectedPlaylistSongIds.size === 0) {
+      return;
+    }
+    await handleDeletePlaylistSongs(Array.from(selectedPlaylistSongIds));
+  }, [handleDeletePlaylistSongs, selectedPlaylistSongIds]);
 
   const handleOpenPlaylistMenu = useCallback(() => {
     if (!playlistToast.song) {
@@ -1967,6 +2134,20 @@ export default function App() {
                           >
                             Rename
                           </Button>
+                          {isPlaylistEditing && (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              startIcon={<RemoveCircleOutlineIcon />}
+                              onClick={handleRemoveSelectedFromPlaylist}
+                              disabled={selectedPlaylistSongIds.size === 0}
+                            >
+                              Remove selected
+                              {selectedPlaylistSongIds.size > 0
+                                ? ` (${selectedPlaylistSongIds.size})`
+                                : ''}
+                            </Button>
+                          )}
                           {isPlaylistEditing && isPlaylistReorderSaving && (
                             <Box className="playlist-save-indicator">
                               <CircularProgress size={14} />
@@ -1996,7 +2177,7 @@ export default function App() {
                             startIcon={<DeleteOutlineIcon />}
                             onClick={handleDeletePlaylist}
                           >
-                            Delete
+                            Delete playlist
                           </Button>
                         </Box>
                       </Box>
@@ -2315,6 +2496,23 @@ export default function App() {
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         sx={{ bottom: 128 }}
       />
+      <Snackbar
+        key={undoToast.key}
+        open={undoToast.open}
+        autoHideDuration={UNDO_TIMEOUT_MS}
+        onClose={handleCloseUndoToast}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{ bottom: 160 }}
+      >
+        <SnackbarContent
+          message={undoToast.message}
+          action={
+            <Button color="inherit" size="small" onClick={handleUndo}>
+              Undo
+            </Button>
+          }
+        />
+      </Snackbar>
       <Snackbar
         open={statsToast.open}
         autoHideDuration={4000}

@@ -67,6 +67,7 @@ interface RowData {
   onReorder?: (fromIds: string[], toIndex: number) => void;
   onMove?: (songId: string, direction: 'up' | 'down') => void;
   reorderDisabled?: boolean;
+  draggingSingleId?: string | null;
   onDragStart?: (
     event: ReactPointerEvent<HTMLElement>,
     song: SongSummary,
@@ -148,6 +149,8 @@ function Row({ index, style, data }: ListChildComponentProps<RowData>) {
   const visibleActions = data.actions?.filter((action) => !action.hidden?.(song)) ?? [];
   const isSelectable = Boolean(data.showCheckboxes && data.onToggleSelect);
   const isSelected = Boolean(isSelectable && data.selectedIds?.has(song.id));
+  const isDraggingSingle = data.draggingSingleId === song.id;
+  const isSelectedForRender = isSelectable && (isSelected || isDraggingSingle);
   const hasSelection = Boolean(data.selectedIds && data.selectedIds.size > 0);
   const canDrag = Boolean(data.onReorder);
   const canMove = Boolean(data.onMove);
@@ -192,7 +195,7 @@ function Row({ index, style, data }: ListChildComponentProps<RowData>) {
           <Box className="song-row-select" onClick={(event) => event.stopPropagation()}>
             <Checkbox
               size="small"
-              checked={isSelected}
+              checked={isSelectedForRender}
               onChange={() => data.onToggleSelect?.(song)}
               inputProps={{ 'aria-label': `Select ${title}` }}
             />
@@ -322,6 +325,8 @@ export default function SongList({
   );
   const isDragging = Boolean(dragState);
   const canReorder = Boolean(onReorder);
+  const draggingSingleId =
+    dragState && dragState.draggingIds.length === 1 ? dragState.draggingIds[0] : null;
   const songIndexById = useMemo(
     () => new Map(songs.map((song, index) => [song.id, index])),
     [songs],
@@ -675,6 +680,7 @@ export default function SongList({
       onReorder,
       onMove,
       reorderDisabled,
+      draggingSingleId,
       disableRowClick,
       draggingSet,
       onDragStart: handleDragStart,
@@ -692,6 +698,7 @@ export default function SongList({
       onSelect,
       onToggleSelect,
       reorderDisabled,
+      draggingSingleId,
       renderItems,
       rowHeight,
       songIndexById,
